@@ -117,4 +117,17 @@
     <string name="notification_install_result_big_text">Применено %1$d из %2$d файлов. Если какие-то изменения не применились, перезапустите игру.</string>
     <string name="notification_install_result_already_applied_title">Мод уже установлен</string>
     <string name="notification_install_result_already_applied_text">Игра не запросила новые файлы, повторная загрузка не понадобилась</string>
+    <string name="title_dns_settings">Настройки DNS</string>
+    <string name="label_nulls_proxy">Null's Proxy</string>
+    <string name="hint_nulls_proxy">Использовать DNS от Null's Proxy для обхода региональных ограничений Brawl Stars (РБ/РФ). Автоматически резолвит игровые хосты через свой DNS при запуске VPN.</string>
+    <string name="title_dns_preset">DNS провайдер</string>
+    <string name="label_doh_url">DoH URL</string>
+    <string name="hint_doh_url">https://dns.nullsproxy.com/dns-query</string>
+    <string name="option_custom_dns">Свой URL</string>
+    <string name="dns_preset_nulls_proxy">Null's Proxy</string>
+    <string name="dns_preset_cloudflare">Cloudflare</string>
+    <string name="dns_preset_google">Google</string>
+    <string name="dns_preset_quad9">Quad9</string>
+    <string name="hint_dns_route">IP-адрес DNS-сервера будет добавлен в маршруты VPN. Для лучших результатов установите системный Private DNS в "Выкл" или на тот же сервер.</string>
+    <string name="log_dns_route_added">VPN добавил DNS маршрут: %1$s</string>
 </resources>

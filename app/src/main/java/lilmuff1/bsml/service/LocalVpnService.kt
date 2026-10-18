@@ -177,6 +177,17 @@ class LocalVpnService : VpnService() {
                 } else {
                     emptyList()
                 }
+
+                val dnsServerIp = resolveDnsServerIp()
+                val dnsServerAddresses = dnsServerIp?.let { ip ->
+                    try {
+                        listOf(InetAddress.getByName(ip) as Inet4Address)
+                    } catch (e: Exception) {
+                        VpnLogRepository.log("VPN failed to parse DNS server IP: $ip")
+                        emptyList()
+                    }
+                } ?: emptyList()
+
                 if (captureSettings.filterByIp && targetAddresses.isEmpty()) {
                     VpnLogRepository.log("VPN resolve failed for ${captureSettings.ipFilterText.ifBlank { GAME_HOST }}")
                     VpnLogRepository.setStatus("Resolve failed")
@@ -198,6 +209,10 @@ class LocalVpnService : VpnService() {
                     }
                     publicAssetAddresses.forEach { address ->
                         builder.addRoute(address.hostAddress ?: return@forEach, 32)
+                    }
+                    dnsServerAddresses.forEach { address ->
+                        builder.addRoute(address.hostAddress ?: return@forEach, 32)
+                        VpnLogRepository.log("VPN added DNS route: ${address.hostAddress}")
                     }
                 } else {
                     builder.addRoute("0.0.0.0", 0)
@@ -225,7 +240,7 @@ class LocalVpnService : VpnService() {
                 }
 
                 val targetIpInts = if (captureSettings.filterByIp) {
-                    (targetAddresses + publicAssetAddresses).map { ipv4BytesToInt(it.address) }.toSet()
+                    (targetAddresses + publicAssetAddresses + dnsServerAddresses).map { ipv4BytesToInt(it.address) }.toSet()
                 } else {
                     null
                 }
@@ -387,10 +402,40 @@ class LocalVpnService : VpnService() {
     private fun resolveTargetAddresses(targetEntries: List<String>): List<Inet4Address> {
         var lastError: Throwable? = null
         val addresses = LinkedHashMap<String, Inet4Address>()
+
+        if (VpnLogRepository.isCustomDnsEnabledNow()) {
+            val dnsServerIp = resolveDnsServerIp()
+            if (dnsServerIp != null) {
+                targetEntries.forEach { target ->
+                    if (isIpv4Address(target)) {
+                        try {
+                            addresses[target] = InetAddress.getByName(target) as Inet4Address
+                        } catch (_: Exception) {}
+                        return@forEach
+                    }
+                    val resolved = VpnLogRepository.resolveViaDnsServer(target, dnsServerIp)
+                    resolved.forEach { address ->
+                        addresses[address.hostAddress ?: address.hostAddress] = address
+                    }
+                }
+                if (addresses.isNotEmpty()) {
+                    VpnLogRepository.log(
+                        "VPN resolved via custom DNS($dnsServerIp) ips=${addresses.values.joinToString { it.hostAddress ?: "?" }}"
+                    )
+                    return addresses.values.toList()
+                }
+                VpnLogRepository.log("VPN custom DNS resolve returned empty, falling back to system DNS")
+            }
+        }
+
         repeat(DNS_RESOLVE_ATTEMPTS) { index ->
             val attempt = index + 1
             try {
                 targetEntries.forEach { target ->
+                    if (isIpv4Address(target)) {
+                        addresses[target] = InetAddress.getByName(target) as Inet4Address
+                        return@forEach
+                    }
                     InetAddress.getAllByName(target)
                         .filterIsInstance<Inet4Address>()
                         .forEach { address ->
@@ -427,6 +472,21 @@ class LocalVpnService : VpnService() {
             )
         }
         return emptyList()
+    }
+
+    private fun resolveDnsServerIp(): String? {
+        if (!VpnLogRepository.isCustomDnsEnabledNow()) return null
+        val preset = DNS_SERVER_PRESETS.firstOrNull { it.dohUrl.contains("nullsproxy") }
+        val staticIp = preset?.bootstrapIp ?: VpnLogRepository.effectiveBootstrapIp().takeIf { it.isNotEmpty() }
+        if (staticIp != null) {
+            val resolved = VpnLogRepository.resolveNullsProxyIp()
+            return resolved ?: staticIp
+        }
+        return staticIp
+    }
+
+    private fun isIpv4Address(value: String): Boolean {
+        return value.matches(Regex("""^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"""))
     }
 
     private fun parseList(text: String, fallback: String): List<String> {

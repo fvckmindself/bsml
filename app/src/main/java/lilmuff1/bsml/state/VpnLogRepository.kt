@@ -9,7 +9,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import lilmuff1.bsml.config.DEFAULT_CAPTURE_PACKAGES
 import lilmuff1.bsml.config.DEFAULT_CAPTURE_TARGETS
+import lilmuff1.bsml.config.DNS_SERVER_PRESETS
 import lilmuff1.bsml.config.GAME_PORT
+import lilmuff1.bsml.config.NULLS_PROXY_DNS
+import lilmuff1.bsml.service.DnsOverHttpsResolver
+import lilmuff1.bsml.service.UdpDnsResolver
 
 data class VpnCaptureSettings(
     val filterByIp: Boolean,
@@ -45,6 +49,9 @@ object VpnLogRepository {
     private const val KEY_THOROUGH_MOD_DELETE = "thorough_mod_delete"
     private const val KEY_SERVER_REGION = "server_region"
     private const val KEY_APP_LANGUAGE = "app_language"
+    private const val KEY_CUSTOM_DNS_ENABLED = "custom_dns_enabled"
+    private const val KEY_CUSTOM_DOH_URL = "custom_doh_url"
+    private const val KEY_DNS_PRESET_INDEX = "dns_preset_index"
     private val cleanupWarmupReason = CleanupReasonSpec(7, "CLIENT_CONTENT_UPDATE")
 
     private val logLock = Any()
@@ -117,6 +124,21 @@ object VpnLogRepository {
     private val _appLanguage = MutableStateFlow("system")
     val appLanguage = _appLanguage.asStateFlow()
 
+    private val _isCustomDnsEnabled = MutableStateFlow(false)
+    val isCustomDnsEnabled = _isCustomDnsEnabled.asStateFlow()
+
+    private val _customDohUrl = MutableStateFlow("")
+    val customDohUrl = _customDohUrl.asStateFlow()
+
+    private val _dnsPresetIndex = MutableStateFlow(0)
+    val dnsPresetIndex = _dnsPresetIndex.asStateFlow()
+
+    @Volatile
+    private var dnsResolver: DnsOverHttpsResolver? = null
+
+    @Volatile
+    private var udpDnsResolver: UdpDnsResolver? = null
+
     private val _vpnStartBlockedSignal = MutableStateFlow(0)
     val vpnStartBlockedSignal = _vpnStartBlockedSignal.asStateFlow()
 
@@ -154,6 +176,9 @@ object VpnLogRepository {
             _isThoroughModDeleteEnabled.value = prefs.getBoolean(KEY_THOROUGH_MOD_DELETE, false)
             _serverRegion.value = prefs.getString(KEY_SERVER_REGION, "auto") ?: "auto"
             _appLanguage.value = prefs.getString(KEY_APP_LANGUAGE, "system") ?: "system"
+            _isCustomDnsEnabled.value = prefs.getBoolean(KEY_CUSTOM_DNS_ENABLED, false)
+            _customDohUrl.value = prefs.getString(KEY_CUSTOM_DOH_URL, "") ?: ""
+            _dnsPresetIndex.value = prefs.getInt(KEY_DNS_PRESET_INDEX, 0)
             preferencesLoaded = true
         }
     }
@@ -344,6 +369,111 @@ object VpnLogRepository {
     }
 
     fun appLanguageNow(): String = _appLanguage.value
+
+    fun setCustomDnsEnabled(context: Context, isEnabled: Boolean) {
+        _isCustomDnsEnabled.value = isEnabled
+        updatePreference(context) { putBoolean(KEY_CUSTOM_DNS_ENABLED, isEnabled) }
+    }
+
+    fun isCustomDnsEnabledNow(): Boolean = _isCustomDnsEnabled.value
+
+    fun setCustomDohUrl(context: Context, url: String) {
+        val normalized = url.trim()
+        _customDohUrl.value = normalized
+        updatePreference(context) { putString(KEY_CUSTOM_DOH_URL, normalized) }
+    }
+
+    fun customDohUrlNow(): String = _customDohUrl.value
+
+    fun setDnsPresetIndex(context: Context, index: Int) {
+        _dnsPresetIndex.value = index
+        updatePreference(context) { putInt(KEY_DNS_PRESET_INDEX, index) }
+    }
+
+    fun dnsPresetIndexNow(): Int = _dnsPresetIndex.value
+
+    fun effectiveDohUrl(): String {
+        val custom = _customDohUrl.value.trim()
+        if (custom.isNotEmpty()) return custom
+        val index = _dnsPresetIndex.value.coerceIn(0, DNS_SERVER_PRESETS.size - 1)
+        return DNS_SERVER_PRESETS[index].dohUrl
+    }
+
+    fun effectiveBootstrapIp(): String {
+        val index = _dnsPresetIndex.value.coerceIn(0, DNS_SERVER_PRESETS.size - 1)
+        return DNS_SERVER_PRESETS[index].bootstrapIp
+    }
+
+    fun resolveWithCustomDns(hostname: String): List<java.net.Inet4Address> {
+        if (!_isCustomDnsEnabled.value) return emptyList()
+        val dohUrl = effectiveDohUrl()
+        if (dohUrl.isEmpty()) return emptyList()
+        val bootstrapIp = effectiveBootstrapIp().takeIf { it.isNotEmpty() }
+        val currentDohUrl = dnsResolver?.dohUrl ?: ""
+        val resolver = if (dnsResolver == null || currentDohUrl != dohUrl) {
+            DnsOverHttpsResolver(dohUrl, bootstrapIp).also { dnsResolver = it }
+        } else {
+            dnsResolver!!
+        }
+        return resolver.resolve(hostname)
+    }
+
+    fun getDnsServerIp(): String? {
+        if (!_isCustomDnsEnabled.value) return null
+        val custom = _customDohUrl.value.trim()
+        if (custom.isNotEmpty()) {
+            val bootstrapIp = effectiveBootstrapIp()
+            return bootstrapIp.takeIf { it.isNotEmpty() }
+        }
+        val index = _dnsPresetIndex.value.coerceIn(0, DNS_SERVER_PRESETS.size - 1)
+        return DNS_SERVER_PRESETS[index].bootstrapIp.takeIf { it.isNotEmpty() }
+    }
+
+    fun resolveViaDnsServer(target: String, dnsServerIp: String, dnsPort: Int = 53): List<java.net.Inet4Address> {
+        return try {
+            val resolver = udpDnsResolver?.takeIf { it.dnsServerIp == dnsServerIp && it.dnsServerPort == dnsPort }
+                ?: UdpDnsResolver(dnsServerIp, dnsPort).also { udpDnsResolver = it }
+            resolver.resolve(target)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun resolveNullsProxyIp(): String? {
+        val preset = DNS_SERVER_PRESETS.firstOrNull { it.dohUrl.contains("nullsproxy") } ?: return null
+        val staticIp = preset.bootstrapIp
+        return try {
+            val resolver = udpDnsResolver?.takeIf { it.dnsServerIp == staticIp }
+                ?: UdpDnsResolver(staticIp).also { udpDnsResolver = it }
+            val addresses = resolver.resolve(NULLS_PROXY_DNS)
+            addresses.firstOrNull()?.hostAddress ?: staticIp
+        } catch (e: Exception) {
+            staticIp
+        }
+    }
+
+    fun enableNullsProxy(context: Context) {
+        val preset = DNS_SERVER_PRESETS.firstOrNull { it.dohUrl.contains("nullsproxy") } ?: return
+        _isCustomDnsEnabled.value = true
+        _customDohUrl.value = preset.dohUrl
+        _dnsPresetIndex.value = DNS_SERVER_PRESETS.indexOf(preset)
+        updatePreference(context) {
+            putBoolean(KEY_CUSTOM_DNS_ENABLED, true)
+            putString(KEY_CUSTOM_DOH_URL, preset.dohUrl)
+            putInt(KEY_DNS_PRESET_INDEX, DNS_SERVER_PRESETS.indexOf(preset))
+        }
+    }
+
+    fun disableCustomDns(context: Context) {
+        _isCustomDnsEnabled.value = false
+        updatePreference(context) { putBoolean(KEY_CUSTOM_DNS_ENABLED, false) }
+    }
+
+    fun isNullsProxyEnabledNow(): Boolean {
+        if (!_isCustomDnsEnabled.value) return false
+        val custom = _customDohUrl.value.trim()
+        return custom.contains("nullsproxy") || _dnsPresetIndex.value == DNS_SERVER_PRESETS.indexOfFirst { it.dohUrl.contains("nullsproxy") }
+    }
 
     private fun isPackageLaunchable(context: Context, packageName: String): Boolean {
         return context.packageManager.getLaunchIntentForPackage(packageName) != null

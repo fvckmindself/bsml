@@ -117,4 +117,17 @@
     <string name="notification_install_result_big_text">Applied %1$d of %2$d files. If some changes were not applied, please restart the game.</string>
     <string name="notification_install_result_already_applied_title">Mod already installed</string>
     <string name="notification_install_result_already_applied_text">The game did not request new files, re-download was not needed</string>
+    <string name="title_dns_settings">DNS Settings</string>
+    <string name="label_nulls_proxy">Null's Proxy</string>
+    <string name="hint_nulls_proxy">Use Null's Proxy DNS to bypass regional restrictions for Brawl Stars (RB/RF). Automatically resolves game hosts via custom DNS when VPN starts.</string>
+    <string name="title_dns_preset">DNS Provider</string>
+    <string name="label_doh_url">DoH URL</string>
+    <string name="hint_doh_url">https://dns.nullsproxy.com/dns-query</string>
+    <string name="option_custom_dns">Custom URL</string>
+    <string name="dns_preset_nulls_proxy">Null's Proxy</string>
+    <string name="dns_preset_cloudflare">Cloudflare</string>
+    <string name="dns_preset_google">Google</string>
+    <string name="dns_preset_quad9">Quad9</string>
+    <string name="hint_dns_route">DNS server IP will be added to VPN routes. Set your device Private DNS to "Off" or match this DNS for best results.</string>
+    <string name="log_dns_route_added">VPN added DNS route: %1$s</string>
 </resources>

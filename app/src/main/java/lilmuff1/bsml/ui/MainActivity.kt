@@ -107,6 +107,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.lifecycleScope
 import lilmuff1.bsml.R
 import lilmuff1.bsml.config.DEFAULT_CAPTURE_PACKAGES
+import lilmuff1.bsml.config.DNS_SERVER_PRESETS
 import lilmuff1.bsml.service.AssetProxyService
 import lilmuff1.bsml.service.LocalVpnService
 import lilmuff1.bsml.state.CleanupReasonSpec
@@ -215,6 +216,9 @@ private fun MainScreen() {
     val packageText by VpnLogRepository.packageText.collectAsState()
     val autoLaunchPackage by VpnLogRepository.autoLaunchPackage.collectAsState()
     val portText by VpnLogRepository.portText.collectAsState()
+    val isCustomDnsEnabled by VpnLogRepository.isCustomDnsEnabled.collectAsState()
+    val customDohUrl by VpnLogRepository.customDohUrl.collectAsState()
+    val dnsPresetIndex by VpnLogRepository.dnsPresetIndex.collectAsState()
     val preparation by ModFilesRepository.preparation.collectAsState()
     val importedModState by ImportedModRepository.state.collectAsState()
     val originalAssetsState by OriginalAssetsRepository.state.collectAsState()
@@ -454,6 +458,9 @@ private fun MainScreen() {
             latestGameServerLabel = latestGameServerLabel,
             latestGameServerNotLoaded = latestGameServerNotLoaded,
             originalAssetsFolderName = originalAssetsState.folderName,
+            isCustomDnsEnabled = isCustomDnsEnabled,
+            customDohUrl = customDohUrl,
+            dnsPresetIndex = dnsPresetIndex,
             onDismiss = { showSettings = false },
             onSelectOriginalAssetsFolder = { sourceFolderPickerLauncher.launch(null) },
             onClearOriginalAssetsFolder = { OriginalAssetsRepository.setTreeUri(context, null) },
@@ -488,6 +495,15 @@ private fun MainScreen() {
                 scope.launch {
                     LatestFingerprintRepository.fetchLatest(context)
                 }
+            },
+            onCustomDnsEnabledChange = { enabled ->
+                VpnLogRepository.setCustomDnsEnabled(context, enabled)
+            },
+            onCustomDohUrlChange = { url ->
+                VpnLogRepository.setCustomDohUrl(context, url)
+            },
+            onDnsPresetIndexChange = { index ->
+                VpnLogRepository.setDnsPresetIndex(context, index)
             }
         )
         return
@@ -1497,6 +1513,9 @@ private fun SettingsScreen(
     latestGameServerLabel: String,
     latestGameServerNotLoaded: String,
     originalAssetsFolderName: String?,
+    isCustomDnsEnabled: Boolean,
+    customDohUrl: String,
+    dnsPresetIndex: Int,
     onDismiss: () -> Unit,
     onSelectOriginalAssetsFolder: () -> Unit,
     onClearOriginalAssetsFolder: () -> Unit,
@@ -1506,7 +1525,10 @@ private fun SettingsScreen(
     onAutoPrepareFilesEnabledChange: (Boolean) -> Unit,
     onAutoPrepareFilesDelaySecondsChange: (String) -> Unit,
     onExportLogLinesChange: (String) -> Unit,
-    onFetchLatest: () -> Unit
+    onFetchLatest: () -> Unit,
+    onCustomDnsEnabledChange: (Boolean) -> Unit,
+    onCustomDohUrlChange: (String) -> Unit,
+    onDnsPresetIndexChange: (Int) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1705,6 +1727,107 @@ private fun SettingsScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
+                }
+
+                SectionCard(contentPadding = 16.dp) {
+                    SectionTitle(stringResource(R.string.title_dns_settings))
+                    SettingsSwitchRow(
+                        label = stringResource(R.string.label_nulls_proxy),
+                        checked = isCustomDnsEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                VpnLogRepository.enableNullsProxy(context)
+                            } else {
+                                VpnLogRepository.disableCustomDns(context)
+                            }
+                        },
+                        enabled = !isRunning
+                    )
+                    Text(
+                        text = stringResource(R.string.hint_nulls_proxy),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (isCustomDnsEnabled) {
+                        // DNS Preset Selector
+                        var dnsPresetExpanded by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { dnsPresetExpanded = true }
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = DNS_SERVER_PRESETS.getOrNull(dnsPresetIndex)?.name ?: stringResource(R.string.option_custom_dns),
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Icon(
+                                    Icons.Rounded.KeyboardArrowDown,
+                                    contentDescription = stringResource(R.string.title_dns_preset),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = dnsPresetExpanded,
+                                onDismissRequest = { dnsPresetExpanded = false }
+                            ) {
+                                DNS_SERVER_PRESETS.forEachIndexed { index, preset ->
+                                    DropdownMenuItem(
+                                        text = { Text(preset.name) },
+                                        trailingIcon = {
+                                            RadioButton(
+                                                selected = dnsPresetIndex == index && customDohUrl.isEmpty(),
+                                                onClick = null
+                                            )
+                                        },
+                                        onClick = {
+                                            dnsPresetExpanded = false
+                                            onDnsPresetIndexChange(index)
+                                            onCustomDohUrlChange("")
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.option_custom_dns)) },
+                                    trailingIcon = {
+                                        RadioButton(
+                                            selected = customDohUrl.isNotEmpty(),
+                                            onClick = null
+                                        )
+                                    },
+                                    onClick = {
+                                        dnsPresetExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                        // Custom DoH URL input
+                        OutlinedTextField(
+                            value = customDohUrl,
+                            onValueChange = { 
+                                onCustomDohUrlChange(it)
+                                if (it.isNotEmpty()) {
+                                    onDnsPresetIndexChange(-1)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isRunning,
+                            label = { Text(stringResource(R.string.label_doh_url)) },
+                            placeholder = { Text(stringResource(R.string.hint_doh_url)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                        )
+                        Text(
+                            text = stringResource(R.string.hint_dns_route),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 SectionCard(contentPadding = 16.dp) {
