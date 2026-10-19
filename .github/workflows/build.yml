@@ -35,7 +35,9 @@ jobs:
       - name: Download gradle-wrapper.jar
         run: |
           mkdir -p gradle/wrapper
-          curl -L -o gradle/wrapper/gradle-wrapper.jar "https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar"
+          git clone --depth 1 --branch v8.7.0 --filter=blob:none --sparse https://github.com/gradle/gradle.git gradle-tmp
+          cd gradle-tmp && git sparse-checkout set gradle/wrapper && cp gradle/wrapper/gradle-wrapper.jar ../gradle/wrapper/
+          cd .. && rm -rf gradle-tmp
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
