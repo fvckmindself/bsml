@@ -22,4 +22,4 @@ app/src/test
 app/release
 67_Starr_Nova.NullsBrawlAssets
 minecraft
-/gradle
+!gradle/wrapper/gradle-wrapper.jar
